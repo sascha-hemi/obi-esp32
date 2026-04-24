@@ -215,6 +215,32 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         </div>
 
         <div class="card">
+            <h2>Battery Health</h2>
+            <div class="data-grid">
+                <div class="data-item">
+                    <div class="data-label">Battery Type</div>
+                    <div class="data-value" id="batteryType">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">Health Rating</div>
+                    <div class="data-value" id="healthRating">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">State of Charge</div>
+                    <div class="data-value" id="stateOfCharge">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">Overdischarge</div>
+                    <div class="data-value" id="overdischargePct">--</div>
+                </div>
+                <div class="data-item">
+                    <div class="data-label">Overload</div>
+                    <div class="data-value" id="overloadPct">--</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>Actions</h2>
             <div class="buttons">
                 <button class="btn" onclick="testLeds(true)">LEDs ON</button>
@@ -225,7 +251,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         <div class="card">
             <h2>Debug Log</h2>
-            <div class="debug" id="debugLog">OBI ESP32 Web Interface Ready\n</div>
+            <div style="margin-bottom:8px;">
+                <button class="btn" style="padding:6px 14px;font-size:0.85em;" onclick="clearLog()">Clear</button>
+                <label style="font-size:0.85em;margin-left:10px;">
+                    <input type="checkbox" id="autoScroll" checked> Auto-scroll
+                </label>
+            </div>
+            <div class="debug" id="debugLog"></div>
         </div>
     </div>
 
@@ -233,8 +265,32 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         function log(msg) {
             const el = document.getElementById('debugLog');
             const time = new Date().toLocaleTimeString();
-            el.textContent += `[${time}] ${msg}\n`;
-            el.scrollTop = el.scrollHeight;
+            const line = document.createTextNode('[' + time + '] ' + msg + '\n');
+            el.appendChild(line);
+            if (document.getElementById('autoScroll').checked)
+                el.scrollTop = el.scrollHeight;
+        }
+
+        let lastLogCount = 0;
+
+        async function pollLog() {
+            try {
+                const resp = await fetch('/api/log');
+                const lines = await resp.json();
+                if (lines.length !== lastLogCount) {
+                    const el = document.getElementById('debugLog');
+                    el.textContent = '';
+                    lines.forEach(l => el.appendChild(document.createTextNode(l + '\n')));
+                    lastLogCount = lines.length;
+                    if (document.getElementById('autoScroll').checked)
+                        el.scrollTop = el.scrollHeight;
+                }
+            } catch (e) { /* ignore while page loads */ }
+        }
+
+        function clearLog() {
+            document.getElementById('debugLog').textContent = '';
+            lastLogCount = -1; // force re-sync on next poll
         }
 
         function setStatus(msg, type) {
@@ -284,6 +340,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('cellDiff').textContent = data.cellDiff.toFixed(3) + ' V';
                 document.getElementById('tempCell').textContent = data.tempCell.toFixed(1) + ' °C';
                 document.getElementById('tempMosfet').textContent = data.tempMosfet ? data.tempMosfet.toFixed(1) + ' °C' : '--';
+
+                const typeNames = {0: 'Type 0 (newest)', 2: 'Type 2', 3: 'Type 3', 5: 'Type 5 (F0513)', 6: 'Type 6 (36V)', 255: 'Unknown'};
+                document.getElementById('batteryType').textContent = typeNames[data.batteryType] !== undefined ? typeNames[data.batteryType] : 'Type ' + data.batteryType;
+
+                if (data.healthRating !== 255) {
+                    const stars = '★'.repeat(data.healthRating) + '☆'.repeat(4 - data.healthRating);
+                    document.getElementById('healthRating').textContent = stars + ' (' + data.healthRating + '/4)';
+                } else {
+                    document.getElementById('healthRating').textContent = 'N/A';
+                }
+
+                if (data.stateOfCharge !== 255) {
+                    document.getElementById('stateOfCharge').textContent = Math.round(data.stateOfCharge / 7 * 100) + '% (' + data.stateOfCharge + '/7)';
+                } else {
+                    document.getElementById('stateOfCharge').textContent = 'N/A';
+                }
+
+                document.getElementById('overdischargePct').textContent = data.overdischargePct > 0 ? data.overdischargePct.toFixed(1) + '%' : '0%';
+                document.getElementById('overloadPct').textContent = data.overloadPct > 0 ? data.overloadPct.toFixed(1) + '%' : '0%';
 
                 setStatus('Battery connected: ' + (data.model || 'Unknown'), 'ok');
                 log('Battery read successful: ' + data.model);
@@ -335,7 +410,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
 
         // Initial status check
-        log('Checking connection...');
+        pollLog();
+        setInterval(pollLog, 2000);
     </script>
 </body>
 </html>
